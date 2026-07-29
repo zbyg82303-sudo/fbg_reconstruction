@@ -1,0 +1,36 @@
+# Bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+*.spec
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data files (generated at runtime)
+*.csv
+
+# Calibration file (user-specific)
+calibration.json
+
+# Jupyter
+.ipynb_checkpoints/
