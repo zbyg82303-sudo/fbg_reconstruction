@@ -13,6 +13,7 @@ class DataCollection:
         self.count = 0
         self.target_count = target_count
         self.buffer = []
+        self.fine_disp_buffer = []
         self.collection_round = 0
 
     def _ensure_file(self):
@@ -41,6 +42,7 @@ class DataCollection:
         self.collecting = True
         self.count = 0
         self.buffer = []
+        self.fine_disp_buffer = []
         self.collection_round += 1
         print(f"开始采集第{self.collection_round}组（目标{self.target_count}组）")
 
@@ -73,6 +75,10 @@ class DataCollection:
         ]
         self.writer.writerow(row)
         self.buffer.append(data)
+
+        fine_disp = data.get("fine_disp")
+        if fine_disp is not None:
+            self.fine_disp_buffer.append(fine_disp)
 
         if self.count % 10 == 0:
             self.file.flush()
@@ -131,6 +137,15 @@ class DataCollection:
                               f"{np.mean(acc_arr):.4f}",
                               f"{np.std(acc_arr):.4f}"])
         self.writer.writerow([])
+
+        # ---- 细粒度位移 (0~300mm, 步长2mm, 100组平均) ----
+        if self.fine_disp_buffer:
+            fine_avg = np.mean(self.fine_disp_buffer, axis=0)
+            fine_x = np.arange(0, 301, 2)
+            header = [f"{x}mm位移" for x in fine_x]
+            self.writer.writerow(header)
+            self.writer.writerow([f"{v:.4f}" for v in fine_avg])
+            self.writer.writerow([])
 
         self.file.flush()
         print(f"第{self.collection_round}组采集完成！统计摘要已保存")

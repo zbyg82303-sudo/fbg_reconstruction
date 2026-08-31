@@ -9,8 +9,8 @@ h = 3.5
 # 截面函数
 # ===============================
 def b_func(x):
-    x = np.array(x)
-    b = np.zeros_like(x)
+    x = np.array(x, dtype=float)
+    b = np.zeros_like(x, dtype=float)
 
     mask1 = x <= 240
     b[mask1] = 46 - (46 - 9)/240 * x[mask1]

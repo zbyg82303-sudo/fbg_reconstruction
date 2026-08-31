@@ -100,6 +100,7 @@ def compute_thread():
     s = np.linspace(0, beam_length, state.points)
     gauge_positions = np.array(state.GAUGE_POSITIONS)
     eval_points = np.linspace(0, beam_length, 50)
+    fine_x = np.arange(0, 301, 2)  # 0, 2, 4, ..., 300 mm
     last_print = 0.0
 
     while True:
@@ -184,6 +185,7 @@ def compute_thread():
                     "accuracy": accuracy,
                     "displacement_mm": state.current_displacement_mm,
                     "voltage_raw": voltage,
+                    "fine_disp": np.abs(cs_rec(fine_x)),
                 })
 
             state.error_info_text = format_error_report(

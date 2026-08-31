@@ -308,7 +308,7 @@ def open_calibration_window(_event=None):
         loads = np.array([d[0] for d in state.calibration_data])
         strains = np.array([d[1] for d in state.calibration_data])  # (n, 4)
 
-        positions = np.array([60, 120, 180, 240])
+        positions = np.array([60, 120, 180, 240], dtype=float)
 
         # 理论灵敏度 K_theory (με/N)，用于计算各通道理论应变
         sensor_y = 1.75
@@ -413,7 +413,7 @@ def open_calibration_window(_event=None):
     _refresh_tree()
     _update_status()
     if state.calibration_coeffs is not None and state.calibration_factors is not None:
-        positions = np.array([60, 120, 180, 240])
+        positions = np.array([60, 120, 180, 240], dtype=float)
         lines = ["拟合结果 (ε_theory = k · ε_measured + c):", "-" * 58]
         for i, (k, c) in enumerate(state.calibration_coeffs):
             lines.append(f"通道{i+1} ({positions[i]}mm): "
