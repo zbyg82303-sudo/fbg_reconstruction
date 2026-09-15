@@ -9,11 +9,13 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import TextBox, Button
 from matplotlib import gridspec
 
+import modal_analysis
 import state
 from beam_model import generate_beam_mesh, generate_side_meshes, beam_length
 from data_collection import DataCollection
 from threads import data_thread, compute_thread
 from ui_windows import open_cloud_map, update_cloud_map, open_error_analysis, update_error_window, open_calibration_window
+from ui_modal import open_modal_window
 
 plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
@@ -172,7 +174,7 @@ def run_app(sock, config):
     refresh_box.on_submit(set_refresh_rate)
 
     # 按钮区域 (右侧，均匀分布)
-    n_buttons = 6
+    n_buttons = 7
     btn_group_left = bx0 + 0.13
     btn_group_right = bx0 + bw - 0.005
     btn_area_w = btn_group_right - btn_group_left
@@ -224,6 +226,11 @@ def run_app(sock, config):
     ax_calib_btn = fig.add_axes((btn_x(5), btn_y, btn_w, btn_h))
     calib_button = Button(ax_calib_btn, '标定', color='#9C27B0', hovercolor='#7B1FA2')
     calib_button.on_clicked(open_calibration_window)
+
+    # 实时固有频率按钮
+    ax_modal_btn = fig.add_axes((btn_x(6), btn_y, btn_w, btn_h))
+    modal_button = Button(ax_modal_btn, '固有频率', color='#00BCD4', hovercolor='#0097A7')
+    modal_button.on_clicked(open_modal_window)
 
     # 获取 matplotlib TkAgg 的根窗口
     state.root_tk = fig.canvas.manager.window
@@ -336,8 +343,10 @@ def run_app(sock, config):
     # ---- 启动线程 ----
     t1 = threading.Thread(target=data_thread, args=(sock,), daemon=True)
     t2 = threading.Thread(target=compute_thread, daemon=True)
+    t3 = threading.Thread(target=modal_analysis.modal_thread, daemon=True)
     t1.start()
     t2.start()
+    t3.start()
 
     print("系统启动完成")
     plt.show(block=True)

@@ -2,6 +2,7 @@ import collections
 import json
 import os
 import queue
+import threading
 
 # 标定文件路径
 _CALIB_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -14,7 +15,7 @@ mode = {"type": "manual"}
 F_prev = 30
 
 # 线程间队列
-queue_data = queue.Queue(maxsize=3)
+queue_data = queue.Queue(maxsize=1)
 queue_result = queue.Queue(maxsize=1)
 
 # 数据采集
@@ -74,6 +75,46 @@ strain_offsets = None
 
 # 主 tk 根窗口
 root_tk = None
+
+# ---- 实时固有频率分析 (FFT) ----
+# 仪器采样频率 SAMPLE_RATE_HZ (Hz): DHDAS 数据包内的采样行按此频率连续排列, 固定值.
+# 分析前做 10:1 抗混叠抽取 (DECIMATE): 先低通再每 10 点取 1, 等效分析采样率
+# ANALYSIS_RATE_HZ = 1000 Hz (Nyquist 500 Hz). FFT 频率轴只由分析采样率换算:
+# Δf = ANALYSIS_RATE_HZ / 实际送入点数. 采样率与 FFT 检出的固有频率 peak_freq_hz
+# 是两回事, 严禁混用.
+SAMPLE_RATE_HZ = 10000.0
+DECIMATE = 10
+ANALYSIS_RATE_HZ = SAMPLE_RATE_HZ / DECIMATE
+
+modal_window = None                      # 模态分析窗口 (Tk Toplevel)
+modal_active = False                     # 仅在窗口打开时为 True, 关闭后零开销
+modal_buffer = collections.deque()       # (整包采样矩阵 (n_rows, n_ch), 到达时间) 环形缓冲
+modal_samples = 0                        # 缓冲内总采样行数 (用于按行数裁剪)
+modal_max_samples = 163840               # 缓冲上限 (行), 约 16.4s @ 10000 Hz;
+                                         # 8192 点 @1000 Hz 需 81920 行原始数据
+modal_lock = threading.Lock()            # 保护 modal_buffer 的追加/快照
+modal_result = None                      # 最新分析结果 dict (模态线程写入, UI 读取)
+modal_params = {
+    "fft_size": 4096,        # FFT 点数 N (固定, 每次只用最新 N 个分析点):
+                             # 1000 Hz 分析采样率下 Δf = 0.24 Hz, 窗口 4.10 s;
+                             # 可选 2048/4096/8192
+    "avg_frames": 4,         # 多帧平均谱的帧数 (固有频率链路; 当前帧峰不受影响)
+    "update_hz": 2.0,        # 频谱显示/识别刷新率; 原始数据仍按 1000 Hz 分析
+    "max_freq": 100.0,       # 横轴显示终点; 可在模态窗口手动修改
+    "min_show_freq": 0.0,    # 横轴显示起点
+    "peak_count": 3,         # 检测峰值数量
+    "min_freq": 1.0,         # 峰值搜索下限, 避开直流与低频漂移
+    "min_gap_hz": 2.0,       # 峰值之间最小频率间隔
+    "prominence_pct": 10.0,  # 峰值最小突出度 (相对谱峰值的百分比)
+    "stability_pct": 2.0,    # 频率稳定性判定阈值 (%)
+    "low_freq_max": 0.0,     # 不再强制低频峰作为一阶候选, 避免加载趋势抢占主读数
+    "response_min_freq": 0.5,     # 响应主频搜索下限; 保留约 1 Hz 的静止/慢响应
+    "response_max_freq": 120.0,   # 响应主频搜索上限; 按压/加载实验通常看低中频段
+    "response_highpass_hz": 0.2,  # 轻微高通 + 去趋势, 抑制慢漂移但保留约 1 Hz 响应
+    "notch_50hz": True,           # 静止时常见 50 Hz 工频干扰, 主频识别默认排除
+    "channel": 0,            # 分析通道索引 0..3 (应变通道)
+    "revision": 0,           # 参数版本号, 变化时重置峰值跟踪
+}
 
 
 def save_calibration():

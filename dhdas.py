@@ -1,27 +1,32 @@
-import struct
 import socket as _socket
+import struct
+
 import numpy as np
 
 SIGNATURE = 0x55AAAA55
 CMD_SERIAL_DATA = 124
+_HEADER_STRUCT = struct.Struct("<III")
+_SERIAL_PREFIX_STRUCT = struct.Struct("<QII")
 
 def recv_all(sock, size):
-    data = b''
-    while len(data) < size:
+    chunks = []
+    received = 0
+    while received < size:
         try:
-            packet = sock.recv(size - len(data))
+            packet = sock.recv(size - received)
         except _socket.timeout:
             return None
         if not packet:
             return None
-        data += packet
-    return data
+        chunks.append(packet)
+        received += len(packet)
+    return chunks[0] if len(chunks) == 1 else b''.join(chunks)
 
 def read_packet(sock):
     header = recv_all(sock, 12)
     if not header:
         return None
-    signature, command, length = struct.unpack("<III", header)
+    signature, command, length = _HEADER_STRUCT.unpack(header)
     if signature != SIGNATURE:
         return None
     data = recv_all(sock, length)
@@ -30,19 +35,20 @@ def read_packet(sock):
     return command, data
 
 def parse_serial_data(data):
-    offset = 0
-    position = struct.unpack("<Q", data[offset:offset+8])[0]
-    offset += 8
-    data_count = struct.unpack("<I", data[offset:offset+4])[0]
-    offset += 4
-    channel_count = struct.unpack("<I", data[offset:offset+4])[0]
-    offset += 4
+    _position, data_count, channel_count = _SERIAL_PREFIX_STRUCT.unpack_from(data, 0)
+    offset = _SERIAL_PREFIX_STRUCT.size
     total = data_count * channel_count
-    values = struct.unpack("<" + "f" * total, data[offset:offset+4*total])
-    values = np.array(values).reshape(data_count, channel_count)
+    values = np.frombuffer(data, dtype="<f4", count=total, offset=offset)
+    values = values.reshape(data_count, channel_count)
     return values
 
 def read_dhdas_data(sock):
+    """读取一个采样包.
+
+    返回 (最后一行, 通道数, 整包数据) 或 None.
+    最后一行 = 原代码的返回值 (符号已取反), 整包数据形状 (data_count, channel_count),
+    供需要完整时域序列的模块使用 (如实时模态分析).
+    """
     while True:
         packet = read_packet(sock)
         if packet is None:
@@ -52,4 +58,5 @@ def read_dhdas_data(sock):
             continue
         values = parse_serial_data(data)
         channel_count = values.shape[1]
-        return -values[-1], channel_count
+        block = -values
+        return block[-1], channel_count, block

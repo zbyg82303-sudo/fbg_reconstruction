@@ -5,11 +5,10 @@ __pycache__/
 *.pyd
 
 # Build / packaging
+# build/ 为 PyInstaller 中间产物, 不入库; dist/ 下的发布 exe 与 .spec 随源码一起入库
 build/
-dist/
 *.egg-info/
 *.egg
-*.spec
 
 # Virtual environment
 venv/

@@ -1,12 +1,26 @@
+import queue
 import time
 
 import numpy as np
-from scipy.interpolate import CubicSpline
 
+import modal_analysis
 import state
 from dhdas import read_dhdas_data
 from reconstruction import curvature_least_squares, curvature_reconstruction, frenet_reconstruction_arc
-from beam_model import estimate_force, theoretical_curve, beam_length
+from beam_model import estimate_force, force_projection, theoretical_curve, beam_length
+
+
+def _replace_queue_item(q, item):
+    """队列只保留最新帧, 避免计算/绘图追赶旧数据造成延迟."""
+    while not q.empty():
+        try:
+            q.get_nowait()
+        except Exception:
+            break
+    try:
+        q.put_nowait(item)
+    except Exception:
+        pass
 
 
 def format_error_report(key_points, mae, rmse, nrmse, accuracy,
@@ -43,13 +57,14 @@ def format_error_report(key_points, mae, rmse, nrmse, accuracy,
 
 def data_thread(sock):
     no_data_count = 0
+    wait_t0 = 0.0
     first_data = True
     voltage_warned = False
     while True:
         try:
             result = read_dhdas_data(sock)
             if result is not None:
-                raw, hw_channels = result
+                raw, hw_channels, block = result
                 no_data_count = 0
 
                 if first_data:
@@ -73,6 +88,11 @@ def data_thread(sock):
 
                 strain = raw[valid_si].copy()
 
+                # 实时模态分析: 送入本包全部采样行 (SAMPLE_RATE_HZ=10000 下的
+                # 连续原始时域序列), 窗口未打开时该调用立即返回
+                if state.modal_active:
+                    modal_analysis.push_packet(block[:, valid_si], time.time())
+
                 # 校验电压通道索引
                 if vi < len(raw):
                     voltage = float(raw[vi])
@@ -82,15 +102,20 @@ def data_thread(sock):
                         print(f"警告: 电压通道索引 {vi} 超出硬件通道范围 (共{len(raw)}通道), 电压置0")
                     voltage = 0.0
 
-                if not state.queue_data.full():
-                    state.queue_data.put((strain, voltage, time.time()))
+                _replace_queue_item(state.queue_data, (strain, voltage, time.time()))
             else:
-                no_data_count += 1
-                if no_data_count == 1:
+                if no_data_count == 0:
                     print("等待DHDAS数据...")
-                elif no_data_count % 100 == 0:
-                    print(f"DHDAS无数据 {no_data_count * 0.01:.0f}s")
-            time.sleep(0.01)
+                    wait_t0 = time.time()
+                elif time.time() - wait_t0 >= 5.0:
+                    print(f"DHDAS无数据 {time.time() - wait_t0:.0f}s")
+                    wait_t0 = time.time()
+                no_data_count += 1
+            # 轮询间隔 2ms: 仪器采样率 SAMPLE_RATE_HZ=10000 下每包约 10ms 一个,
+            # 需及时收完, 否则包会堆积/丢失, 模态分析拿到的时域序列会出现间隙.
+            # 重建侧仍由 queue_data 满即丢, 行为不变.
+            if result is None:
+                time.sleep(0.002)
         except Exception as e:
             print("数据线程错误:", e)
             time.sleep(0.5)
@@ -101,25 +126,31 @@ def compute_thread():
     gauge_positions = np.array(state.GAUGE_POSITIONS)
     eval_points = np.linspace(0, beam_length, 50)
     fine_x = np.arange(0, 301, 2)  # 0, 2, 4, ..., 300 mm
+    # s 与测点位置固定: 力投影向量 phi 与测点单位理论挠度只算一次.
+    # 理论挠度对 F 严格线性 (y = F·y1), 故测点理论值可直接用 y_gauge_unit 缩放.
+    phi = force_projection(s)
+    _, y_gauge_unit = theoretical_curve(1.0, gauge_positions)
     last_print = 0.0
 
     while True:
         try:
-            if state.queue_data.empty():
-                time.sleep(0.005)
+            try:
+                strain, voltage, data_ts = state.queue_data.get(timeout=0.05)
+            except queue.Empty:
                 continue
-
-            strain, voltage, data_ts = state.queue_data.get()
-            state.current_strain_raw = strain.copy()
+            while not state.queue_data.empty():
+                strain, voltage, data_ts = state.queue_data.get()
+            strain = np.asarray(strain, dtype=float)
+            state.current_strain_raw = strain
 
             # 清零修正
             offsets = state.strain_offsets
             if offsets is not None:
                 n_off = min(len(offsets), len(strain))
-                for i in range(n_off):
-                    strain[i] -= offsets[i]
+                strain = strain.copy()
+                strain[:n_off] -= offsets[:n_off]
 
-            state.current_strain_ue = strain.copy()
+            state.current_strain_ue = strain
             strain_for_log = strain[:4].copy()
 
             # 电压清零 + 位移计算
@@ -131,39 +162,37 @@ def compute_thread():
             # 标定修正: ε_corrected = k · ε_measured + c
             if state.calibration_active and state.calibration_factors is not None:
                 factors = state.calibration_factors
-                for i in range(min(4, len(strain))):
-                    k_i, c_i = factors[i]
-                    strain[i] = k_i * strain[i] + c_i
+                n_cal = min(4, len(strain), len(factors))
+                strain = strain.copy()
+                fac = np.asarray(factors[:n_cal], dtype=float)
+                strain[:n_cal] = fac[:, 0] * strain[:n_cal] + fac[:, 1]
 
             strain_si = strain * 1e-6
 
             coef = curvature_least_squares(strain_si)
             kappa_interp = curvature_reconstruction(s, coef)
 
-            F_est = estimate_force(s, kappa_interp)
+            F_est = estimate_force(s, kappa_interp, phi)
             F_prev = state.F_prev
             diff = abs(F_est - F_prev)
             alpha = 0.3 if diff > 1.5 else 0.7
             F_current = alpha * F_prev + (1 - alpha) * F_est
             state.F_prev = F_current
 
-            F_used = state.F_input["value"] if state.mode["type"] == "manual" else F_current
             F_real = state.F_input["value"]
 
             x_rec, y_rec, _ = frenet_reconstruction_arc(s, kappa_interp)
-            cs_rec = CubicSpline(x_rec, y_rec)
 
             x_true_full, y_true_full = theoretical_curve(F_real, x_rec)
-            cs_true = CubicSpline(x_true_full, y_true_full)
 
-            y_rec_key = cs_rec(gauge_positions)
-            y_true_key = cs_true(gauge_positions)
-            _, y_est_key = theoretical_curve(F_est, gauge_positions)
-            y_est_key = np.abs(y_est_key)
+            y_rec_key = np.interp(gauge_positions, x_rec, y_rec)
+            y_true_key = np.interp(gauge_positions, x_true_full, y_true_full)
+            y_est_key = np.abs(F_est * y_gauge_unit)
             key_err = np.abs(y_rec_key - y_true_key)
 
-            y_true_eval = cs_true(eval_points)
-            err = cs_rec(eval_points) - y_true_eval
+            y_rec_eval = np.interp(eval_points, x_rec, y_rec)
+            y_true_eval = np.interp(eval_points, x_true_full, y_true_full)
+            err = y_rec_eval - y_true_eval
             mae = np.mean(np.abs(err))
             rmse = np.sqrt(np.mean(err ** 2))
             y_scale = np.max(np.abs(y_true_eval))
@@ -171,7 +200,7 @@ def compute_thread():
             accuracy = np.exp(-nrmse) * 100
 
             logger = state.logger
-            if logger is not None:
+            if logger is not None and logger.collecting:
                 logger.log({
                     "F_real": F_real,
                     "F_est": F_est,
@@ -185,7 +214,7 @@ def compute_thread():
                     "accuracy": accuracy,
                     "displacement_mm": state.current_displacement_mm,
                     "voltage_raw": voltage,
-                    "fine_disp": np.abs(cs_rec(fine_x)),
+                    "fine_disp": np.abs(np.interp(fine_x, x_rec, y_rec)),
                 })
 
             state.error_info_text = format_error_report(
@@ -198,11 +227,7 @@ def compute_thread():
                 print("\n" + state.error_info_text)
                 last_print = now
 
-            while not state.queue_result.empty():
-                state.queue_result.get()
-            state.queue_result.put((x_rec, y_rec, x_true_full, y_true_full, data_ts, voltage))
-
-            time.sleep(0.01)
+            _replace_queue_item(state.queue_result, (x_rec, y_rec, x_true_full, y_true_full, data_ts, voltage))
 
         except Exception as e:
             print(" 计算线程错误:", e)

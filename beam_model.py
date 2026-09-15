@@ -58,10 +58,16 @@ def error_analysis(x_rec, y_rec, F):
 # ===============================
 # 力估计（加稳定性）
 # ===============================
-def estimate_force(s, kappa_measured):
+def force_projection(s):
+    """力估计的投影向量 phi = (L - s) / (E·I(s)); s 固定时可预计算一次复用."""
+    return (beam_length - s) / (I_func(s) * E)
+def estimate_force(s, kappa_measured, phi=None):
+    """phi 只由梁长/截面/测点位置决定, s 固定时可由调用方预计算一次复用,
+    避免每帧重算 EI 与分母."""
 
-    EI = I_func(s) * E
-    phi = (beam_length - s) / EI
+    if phi is None:
+        EI = I_func(s) * E
+        phi = (beam_length - s) / EI
 
     numerator = np.sum(kappa_measured * phi)
     denominator = np.sum(phi**2)
@@ -79,6 +85,30 @@ def estimate_force(s, kappa_measured):
 # 理论曲率
 # ===============================
 
+_MESH_INVARIANTS = {}
+
+
+def _mesh_invariants(nx, nz):
+    """按 (nx, nz) 缓存与中心线形变无关的网格量: x 网格, 截面宽度, X/Y 坐标矩阵
+    只由梁长与截面函数决定, 不随每帧的挠度改变."""
+    key = (int(nx), int(nz))
+    cached = _MESH_INVARIANTS.get(key)
+    if cached is not None:
+        return cached
+
+    x_uni = np.linspace(0, beam_length, nx)
+    b = b_func(x_uni)
+    z_norm = np.linspace(-1, 1, nz)
+
+    X = np.tile(x_uni[:, np.newaxis], (1, nz))
+    half_w = b / 2.0
+    Y = half_w[:, np.newaxis] * z_norm[np.newaxis, :]
+
+    cached = (x_uni, b, X, Y)
+    _MESH_INVARIANTS[key] = cached
+    return cached
+
+
 def generate_beam_mesh(x_centerline, y_centerline, nx=60, nz=16):
     """
     Generate 3D surface meshes for a variable-section beam.
@@ -93,18 +123,13 @@ def generate_beam_mesh(x_centerline, y_centerline, nx=60, nz=16):
         disp_map              : displacement magnitude at each grid point
         x_uni, y_uni, b_uni, theta_uni : centerline data
     """
-    x_uni = np.linspace(0, beam_length, nx)
+    x_uni, b, X, Y = _mesh_invariants(nx, nz)
+
     y_uni = np.interp(x_uni, x_centerline, y_centerline)
 
     dy = np.gradient(y_uni, x_uni)
     theta = np.arctan2(dy, 1.0)
 
-    b = b_func(x_uni)
-    z_norm = np.linspace(-1, 1, nz)
-
-    X = np.tile(x_uni[:, np.newaxis], (1, nz))
-    half_w = b / 2.0
-    Y = half_w[:, np.newaxis] * z_norm[np.newaxis, :]
     ct = np.cos(theta)
     Z_top = y_uni[:, np.newaxis] + (h / 2.0) * ct[:, np.newaxis]
     Z_bottom = y_uni[:, np.newaxis] - (h / 2.0) * ct[:, np.newaxis]
