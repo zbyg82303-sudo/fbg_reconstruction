@@ -2,10 +2,16 @@ import collections
 import json
 import os
 import queue
+import sys
 import threading
 
-# 标定文件路径
-_CALIB_DIR = os.path.dirname(os.path.abspath(__file__))
+# 标定文件路径.
+# PyInstaller 单文件打包后, 模块的 __file__ 指向解包临时目录 (_MEIPASS, 每次启动都换、
+# 退出即删), 标定文件写在那里会丢失; 冻结运行必须改用 exe 所在目录.
+if getattr(sys, "frozen", False):
+    _CALIB_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    _CALIB_DIR = os.path.dirname(os.path.abspath(__file__))
 CALIBRATION_FILE = os.path.join(_CALIB_DIR, "calibration.json")
 
 # 计算参数
@@ -135,6 +141,7 @@ def save_calibration():
 def load_calibration():
     """Restore calibration state from JSON file. Returns True if loaded."""
     if not os.path.exists(CALIBRATION_FILE):
+        print(f"未找到标定文件: {CALIBRATION_FILE} (按无标定运行)")
         return False
     try:
         with open(CALIBRATION_FILE, "r", encoding="utf-8") as f:
