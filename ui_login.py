@@ -4,7 +4,7 @@ import tkinter as tk
 
 def show_login():
     root = tk.Tk()
-    root.title("教学演示系统")
+    root.title("变截面等强度梁结构变形重建与载荷识别软件")
     root.geometry("460x480")
     root.resizable(False, False)
 
@@ -15,7 +15,7 @@ def show_login():
     y = (sh - 480) // 2
     root.geometry(f"+{x}+{y}")
 
-    tk.Label(root, text="教学演示系统", font=("SimHei", 16, "bold")).pack(pady=(20, 12))
+    tk.Label(root, text="变截面等强度梁结构变形重建与载荷识别软件", font=("SimHei", 14, "bold")).pack(pady=(20, 12))
 
     frm = tk.Frame(root)
     frm.pack(pady=5)

@@ -33,7 +33,7 @@ def run_app(sock, config):
  
     # ---- UI 构建 ----
     plt.ion()
-    fig = plt.figure("教学演示系统", figsize=(12, 7))
+    fig = plt.figure("变截面等强度梁结构变形重建与载荷识别软件", figsize=(12, 7))
 
     gs = gridspec.GridSpec(2, 1, height_ratios=[10, 1.3], figure=fig)
 

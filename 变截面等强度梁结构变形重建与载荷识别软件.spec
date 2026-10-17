@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='教学演示系统',
+    name='变截面等强度梁结构变形重建与载荷识别软件',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
