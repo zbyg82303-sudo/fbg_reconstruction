@@ -162,6 +162,10 @@ def show_login():
                             width=14, height=1, cursor="hand2")
     connect_btn.pack(pady=(12, 0))
 
+    # 版本号 (窗口右下角)
+    tk.Label(root, text="V1.0", font=("SimHei", 9), fg="gray").place(
+        relx=1.0, rely=1.0, anchor="se", x=-10, y=-8)
+
     def on_enter(_event):
         do_connect()
     root.bind("<Return>", on_enter)
